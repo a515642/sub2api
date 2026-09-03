@@ -2021,6 +2021,11 @@ func (a *Account) SupportsOpenAIImageCapability(capability OpenAIImagesCapabilit
 	switch capability {
 	case OpenAIImagesCapabilityBasic, OpenAIImagesCapabilityNative:
 		return a.Type == AccountTypeOAuth || a.Type == AccountTypeSetupToken || a.Type == AccountTypeAPIKey
+	case OpenAIImagesCapabilityCustomModel:
+		// Provider-defined image model names are only safe to forward through
+		// OpenAI API Key accounts. OAuth/Responses accounts require the native
+		// OpenAI image model families and perform their own model validation.
+		return a.Type == AccountTypeAPIKey
 	default:
 		return true
 	}

@@ -46,8 +46,9 @@ const (
 type OpenAIImagesCapability string
 
 const (
-	OpenAIImagesCapabilityBasic  OpenAIImagesCapability = "images-basic"
-	OpenAIImagesCapabilityNative OpenAIImagesCapability = "images-native"
+	OpenAIImagesCapabilityBasic       OpenAIImagesCapability = "images-basic"
+	OpenAIImagesCapabilityNative      OpenAIImagesCapability = "images-native"
+	OpenAIImagesCapabilityCustomModel OpenAIImagesCapability = "images-custom-model"
 )
 
 type OpenAIImagesUpload struct {
@@ -216,7 +217,7 @@ func (s *OpenAIGatewayService) ParseOpenAIImagesRequest(c *gin.Context, body []b
 	}
 
 	applyOpenAIImagesDefaults(req)
-	if err := validateOpenAIImagesModel(req.Model); err != nil {
+	if err := validateOpenAIImagesRequestModel(req.Model); err != nil {
 		return nil, err
 	}
 	req.SizeTier = normalizeOpenAIImageSizeTier(req.Size)
@@ -456,7 +457,29 @@ func applyOpenAIImagesDefaults(req *OpenAIImagesRequest) {
 }
 
 func isOpenAIImageGenerationModel(model string) bool {
+	return isNativeOpenAIImageGenerationModel(model)
+}
+
+func isNativeOpenAIImageGenerationModel(model string) bool {
 	return IsGPTImageGenerationModel(model) || isGrokImageGenerationModel(model)
+}
+
+// isOpenAICompatibleImageModel identifies provider-defined image models that
+// can be exposed through an OpenAI-compatible API Key account. These names
+// are not valid for the OAuth/Responses image bridge, which uses native
+// OpenAI image-generation models instead.
+func isOpenAICompatibleImageModel(model string) bool {
+	model = strings.ToLower(strings.TrimSpace(model))
+	model = strings.TrimPrefix(model, "models/")
+	return model == "gemini-3.1-flash-image" ||
+		model == "gemini-3.1-flash-image-preview" ||
+		strings.HasPrefix(model, "gemini-3.1-flash-image-") ||
+		model == "gemini-3-pro-image" ||
+		model == "gemini-3-pro-image-preview" ||
+		strings.HasPrefix(model, "gemini-3-pro-image-") ||
+		model == "gemini-2.5-flash-image" ||
+		model == "gemini-2.5-flash-image-preview" ||
+		strings.HasPrefix(model, "gemini-2.5-flash-image-")
 }
 
 // IsGPTImageGenerationModel identifies the GPT native image-generation model family.
@@ -474,13 +497,28 @@ func isGrokImageGenerationModel(model string) bool {
 
 func validateOpenAIImagesModel(model string) error {
 	model = strings.TrimSpace(model)
-	if isOpenAIImageGenerationModel(model) {
+	if isNativeOpenAIImageGenerationModel(model) {
 		return nil
 	}
 	if model == "" {
 		return fmt.Errorf("images endpoint requires an image model")
 	}
 	return fmt.Errorf("images endpoint requires an image model, got %q", model)
+}
+
+func validateOpenAIImagesRequestModel(model string) error {
+	model = strings.TrimSpace(model)
+	if isOpenAIImagesEndpointModel(model) {
+		return nil
+	}
+	if model == "" {
+		return fmt.Errorf("images endpoint requires an image model")
+	}
+	return fmt.Errorf("images endpoint requires an image model, got %q", model)
+}
+
+func isOpenAIImagesEndpointModel(model string) bool {
+	return isOpenAIImageGenerationModel(model) || isOpenAICompatibleImageModel(model)
 }
 
 func normalizeOpenAIImagesEndpointPath(path string) string {
@@ -499,10 +537,15 @@ func classifyOpenAIImagesCapability(req *OpenAIImagesRequest) OpenAIImagesCapabi
 	if req == nil {
 		return OpenAIImagesCapabilityNative
 	}
+	model := strings.ToLower(strings.TrimSpace(req.Model))
+	if isOpenAICompatibleImageModel(model) {
+		// A non-built-in model name is valid for an OpenAI-compatible API Key
+		// provider, but cannot be translated by the OAuth/Responses path.
+		return OpenAIImagesCapabilityCustomModel
+	}
 	if req.ExplicitModel || req.ExplicitSize {
 		return OpenAIImagesCapabilityNative
 	}
-	model := strings.ToLower(strings.TrimSpace(req.Model))
 	if !strings.HasPrefix(model, "gpt-image-") {
 		return OpenAIImagesCapabilityNative
 	}
@@ -583,13 +626,14 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 	if mapped := strings.TrimSpace(channelMappedModel); mapped != "" {
 		requestModel = mapped
 	}
-	if err := validateOpenAIImagesModel(requestModel); err != nil {
-		return nil, err
-	}
 	upstreamModel := account.GetMappedModel(requestModel)
-	if err := validateOpenAIImagesModel(upstreamModel); err != nil {
-		return nil, err
+	if strings.TrimSpace(upstreamModel) == "" {
+		return nil, fmt.Errorf("images endpoint requires an image model")
 	}
+	// API Key accounts can target arbitrary OpenAI-compatible providers. Their
+	// image model names are not required to use the built-in gpt-image-* or
+	// grok-imagine* naming conventions, so the provider remains authoritative
+	// for model validity and capability.
 	SetOpsUpstreamModel(c, upstreamModel)
 	logger.LegacyPrintf(
 		"service.openai_gateway",
