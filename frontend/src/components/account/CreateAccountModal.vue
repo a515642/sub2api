@@ -4155,6 +4155,8 @@ function onCnPresetSelect(preset: { mode: CnAccountMode; protocol: CnApiProtocol
 }
 
 const syncPreviewCredentials = computed(() => {
+  // 多行输入仅 OpenAI 支持批量创建；预览同步与创建一致，取第一行作为探测密钥，
+  // 避免把整个多行文本当作 Bearer 发送（含换行符的 Authorization 头会直接失败）。
   const apiKey = parseApiKeyLines(apiKeyValue.value)[0]
   if (!apiKey) return undefined
   const baseUrl = isCNPlatform.value && apiProtocol.value === 'adaptive'
@@ -4169,7 +4171,7 @@ const syncPreviewCredentials = computed(() => {
     platform: form.platform,
     type: form.type,
     base_url: baseUrl || undefined,
-    api_key: apiKeyValue.value,
+    api_key: apiKey,
     ...(modelMapping ? { model_mapping: modelMapping } : {})
   }
 })
