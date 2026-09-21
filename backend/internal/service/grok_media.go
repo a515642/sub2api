@@ -394,6 +394,19 @@ type GrokVideoPendingBilling struct {
 	UpstreamCreatedAtUnix int64   `json:"upstream_created_at_unix,omitempty"`
 	HoldID                string  `json:"hold_id,omitempty"`
 	HoldAmount            float64 `json:"hold_amount,omitempty"`
+	// SettledActualAmount 由后台 reconciler 在 capture 成功后写入（金额已
+	// 结算、frozen 已扣）。此后重试轮次只重试 RecordUsage；重试耗尽的
+	// 终态只删除队列条目（放弃补 usage log），绝不能 release——capture
+	// 与 release 的 dedup request_id 不同，幂等层防不住"已结算再释放"，
+	// 会对已消费的 hold 双倍退款（frozen 是用户级共享池，release 会从
+	// 其它并发任务的冻结资金里退钱；无其它 hold 时则 frozen 不足、
+	// release 永久失败无限重排）。
+	SettledActualAmount float64 `json:"settled_actual_amount,omitempty"`
+	// RetryCount/LastErrorCode 由后台 reconciler 维护：capture 永久失败
+	// （如完成元数据超预留上限）达到上限时走终态释放，避免无限重排、
+	// 冻结余额永不释放。设计对齐 batch_image_settlement 的重试耗尽出口。
+	RetryCount    int    `json:"retry_count,omitempty"`
+	LastErrorCode string `json:"last_error_code,omitempty"`
 }
 
 // GrokVideoPendingCreatedAtNow formats a create-accept timestamp for pending billing.

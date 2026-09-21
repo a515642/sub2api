@@ -433,6 +433,15 @@ func syncBalanceCacheAfterDeduction(ctx context.Context, p *postUsageBillingPara
 	if p == nil || p.Cost == nil || p.User == nil || deps == nil || deps.billingCacheService == nil {
 		return
 	}
+	// BalanceAlreadyReserved（异步任务 hold 结算）：这笔费用已在 Apply 之外结清
+	// ——capture/release 直接改了 DB 余额并失效了余额缓存，buildUsageBillingCommand
+	// 也因该标记不设置 cmd.BalanceCost，Apply 没有再扣 DB 余额。此处再入队一次
+	// 缓存扣减没有任何对应事实：键不存在时是 no-op，键存在时（capture 失效缓存后
+	// 被并发请求回源回填的正常路径）会把已经正确的余额再扣一次，使缓存比 DB 少
+	// 一个任务单价，余额接近最低留存的用户会被误判余额不足直到缓存过期。
+	if p.BalanceAlreadyReserved {
+		return
+	}
 	if result != nil && result.NewBalance != nil && deps.billingCacheService.balanceBelowEligibilityThreshold(*result.NewBalance) {
 		if err := deps.billingCacheService.InvalidateUserBalance(ctx, p.User.ID); err != nil {
 			slog.Warn("invalidate balance cache after exhausted deduction failed",

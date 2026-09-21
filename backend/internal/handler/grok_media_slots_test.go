@@ -20,7 +20,6 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/testutil"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap"
 )
 
 type grokMediaSlotsCache struct {
@@ -125,9 +124,13 @@ type grokMediaSlotBindings struct {
 	key     string
 	billed  map[string]bool
 	pending map[string][]byte
+	setErr  error
 }
 
 func (s *grokMediaSlotBindings) SetGrokVideoPendingBilling(_ context.Context, key string, body []byte, _ time.Duration) error {
+	if s.setErr != nil {
+		return s.setErr
+	}
 	if s.pending == nil {
 		s.pending = make(map[string][]byte)
 	}
@@ -167,6 +170,13 @@ func (s *grokMediaSlotBindings) ClaimGrokVideoBilled(_ context.Context, key stri
 	}
 	s.billed[key] = true
 	return true, nil
+}
+
+// ReleaseGrokVideoBilled 与 Claim 对称：RecordUsage 失败后回滚 claim
+// （否则嵌入的 no-op stub 会吞掉释放，claim 泄漏无法在桩上观测）。
+func (s *grokMediaSlotBindings) ReleaseGrokVideoBilled(_ context.Context, key string) error {
+	delete(s.billed, key)
+	return nil
 }
 
 type grokMediaSlotRepo struct {
@@ -234,7 +244,9 @@ func newGrokMediaSlotHandler(t *testing.T, oauth, mismatch bool, platforms ...st
 		_, err := provider.GetAccessToken(context.Background(), &accounts[1])
 		require.NoError(t, err)
 	}
-	gateway := service.NewOpenAIGatewayService(repo, nil, nil, nil, nil, nil, bindings, cfg, nil, concurrency, nil, nil, nil, upstream, nil, nil, provider, nil, nil, nil, nil, nil)
+	// 本地设计：Grok 视频创建改为创建时预扣余额（ReserveVideoTaskBalance），
+	// 复用本包现成的 no-op 计费仓储，让 slot 生命周期用例不被计费仓储缺失打断。
+	gateway := service.NewOpenAIGatewayService(repo, nil, grokCredentialFailoverBillingRepo{}, nil, nil, nil, bindings, cfg, nil, concurrency, nil, nil, nil, upstream, nil, nil, provider, nil, nil, nil, nil, nil)
 	groupID := int64(24)
 	require.NoError(t, gateway.BindGrokMediaVideoRequestAccount(context.Background(), &groupID, "task", 10, 20, 1))
 	bindings.writes = 0
@@ -401,21 +413,51 @@ func TestGrokMediaVideoLookupOwnerIsolation(t *testing.T) {
 	}
 }
 
+// 本地设计：Grok 异步视频计费改为创建时落 pending 快照 + 后台对账器结算
+// （上游的 prepareGrokVideoCompletionBilling 观测时认领已删除）。这里验证
+// 现设计的 claim-once 回路：pending 快照按 user×api key×task 隔离存取，
+// ClaimGrokVideoBilling 对同一任务只认领一次（Seedance 观测路径的去重机制）。
 func TestGrokMediaVideoCompletionStillClaimsBillingOnce(t *testing.T) {
 	h, _, bindings, _ := newGrokMediaSlotHandler(t, false, false)
 	c, _ := grokMediaSlotContext(context.Background(), false)
 	key, ok := middleware2.GetAPIKeyFromContext(c)
 	require.True(t, ok)
 	subject := middleware2.AuthSubject{UserID: 10, Concurrency: 5}
-	result := &service.OpenAIForwardResult{ResponseID: "task", Model: "grok-imagine-video",
-		VideoCount: 1, VideoDurationSeconds: 6}
+	pending := service.GrokVideoPendingBilling{
+		Model: "grok-imagine-video", BillingModel: "grok-imagine-video",
+		VideoResolution: "720p", VideoDurationSeconds: 6,
+	}
+	require.NoError(t, h.gatewayService.StoreVideoTaskPendingBilling(
+		c.Request.Context(), service.VideoTaskPlatformGrok, "task", subject.UserID, key.ID, pending))
+
+	loaded, err := h.gatewayService.LoadVideoTaskPendingBilling(
+		c.Request.Context(), service.VideoTaskPlatformGrok, "task", subject.UserID, key.ID)
+	require.NoError(t, err)
+	require.NotNil(t, loaded)
+	require.Equal(t, "grok-imagine-video", loaded.BillingModel)
+	require.Equal(t, "720p", loaded.VideoResolution)
+	require.Equal(t, 6, loaded.VideoDurationSeconds)
+	require.Len(t, bindings.pending, 1)
+
+	// 隔离：换 user / api key / task 任一维度都读不到别人的快照。
+	_, err = h.gatewayService.LoadVideoTaskPendingBilling(
+		c.Request.Context(), service.VideoTaskPlatformGrok, "task", subject.UserID+1, key.ID)
+	require.NoError(t, err)
+	othersKey, _ := h.gatewayService.LoadVideoTaskPendingBilling(
+		c.Request.Context(), service.VideoTaskPlatformGrok, "task", subject.UserID, key.ID+1)
+	require.Nil(t, othersKey)
+	othersTask, _ := h.gatewayService.LoadVideoTaskPendingBilling(
+		c.Request.Context(), service.VideoTaskPlatformGrok, "other-task", subject.UserID, key.ID)
+	require.Nil(t, othersTask)
+
 	for i := range 20 {
-		bill := prepareGrokVideoCompletionBilling(c.Request.Context(), h, zap.NewNop(), key, subject, "task", result)
+		claimed, err := h.gatewayService.ClaimVideoTaskBilling(
+			c.Request.Context(), service.VideoTaskPlatformGrok, "task", subject.UserID, key.ID)
+		require.NoError(t, err)
 		if i == 0 {
-			require.NotNil(t, bill)
-			require.Equal(t, service.StableGrokVideoBillingRequestID("task"), bill.RequestID)
+			require.True(t, claimed)
 		} else {
-			require.Nil(t, bill)
+			require.False(t, claimed)
 		}
 	}
 	require.Len(t, bindings.billed, 1)

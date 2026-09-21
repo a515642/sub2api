@@ -220,6 +220,42 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 	}
 	defer releaseAccount()
 
+	// 视频预冻结余额的兜底释放（脱离客户端生命周期的 ctx）：
+	// create 成功但队列条目未落地（响应无 request_id、store 两次失败）、
+	// forward 期间 panic（恢复路径无人持有 videoHold）、客户端断开
+	//（requestCtx 已取消，用它的 release 必然失败）这四种路径都不会
+	// 释放已冻结余额，且 reconciler 永远看不到该任务（无队列条目），
+	// 冻结余额永久泄漏。函数退出时仍未移交对账器的 hold 在此释放。
+	var unreleasedVideoHolds []*service.GrokVideoPendingBilling
+	handOverVideoHold := func(hold *service.GrokVideoPendingBilling) {
+		for i, pending := range unreleasedVideoHolds {
+			if pending.HoldID == hold.HoldID {
+				unreleasedVideoHolds = append(unreleasedVideoHolds[:i], unreleasedVideoHolds[i+1:]...)
+				return
+			}
+		}
+	}
+	defer func() {
+		if len(unreleasedVideoHolds) == 0 {
+			return
+		}
+		// 脱离客户端 ctx（WithoutCancel）：客户端断开/panic 后
+		// requestCtx 已取消，仓储 BeginTx(ctx) 随之失败。
+		reqLog := requestLogger(c, "handler.openai_gateway.grok_media")
+		for _, hold := range unreleasedVideoHolds {
+			releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(requestCtx), 15*time.Second)
+			releaseErr := h.gatewayService.ReleaseVideoTaskBalance(releaseCtx, hold, subject.UserID, apiKey.ID)
+			cancel()
+			if releaseErr != nil {
+				reqLog.Error("grok_media.video_billing_hold_leak_release_failed",
+					zap.String("hold_id", hold.HoldID), zap.Float64("amount", hold.HoldAmount), zap.Error(releaseErr))
+			} else {
+				reqLog.Warn("grok_media.video_billing_hold_leak_released",
+					zap.String("hold_id", hold.HoldID), zap.Float64("amount", hold.HoldAmount))
+			}
+		}
+	}()
+
 	for {
 		releaseAccount()
 		if failoverClientGone(c) {
@@ -387,7 +423,10 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 				h.errorResponse(c, status, code, message)
 				return
 			}
+			// 登记到函数级兜底释放表：任何路径下未移交对账器（store 成功）
+			// 的 hold 在函数退出时释放；多轮 failover 各轮的 hold 分开登记。
 			videoHold = &service.GrokVideoPendingBilling{HoldID: holdID, HoldAmount: cost}
+			unreleasedVideoHolds = append(unreleasedVideoHolds, videoHold)
 		}
 		forwardStart := time.Now()
 		writerSizeBeforeForward := c.Writer.Size()
@@ -409,9 +448,19 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 
 		if err != nil {
 			if videoHold != nil {
-				if releaseErr := h.gatewayService.ReleaseVideoTaskBalance(requestCtx, videoHold, subject.UserID, apiKey.ID); releaseErr != nil {
+				// 脱离客户端 ctx：forward 失败常因客户端断开（requestCtx 已取消），
+				// 用它调仓储 BeginTx(ctx) 必然失败。
+				releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(requestCtx), 15*time.Second)
+				releaseErr := h.gatewayService.ReleaseVideoTaskBalance(releaseCtx, videoHold, subject.UserID, apiKey.ID)
+				cancel()
+				if releaseErr != nil {
 					reqLog.Error("grok_media.video_billing_hold_release_failed", zap.String("hold_id", videoHold.HoldID), zap.Error(releaseErr))
+					// 释放失败（仓储瞬时故障）时保留在兜底表里，函数退出时重试；
+					// 释放是幂等的（请求指纹去重），重复释放无副作用。
+				} else {
+					handOverVideoHold(videoHold)
 				}
+				videoHold = nil
 			}
 			var failoverErr *service.UpstreamFailoverError
 			if errors.As(err, &failoverErr) {
@@ -526,38 +575,30 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 				pending.HoldID, pending.HoldAmount = videoHold.HoldID, videoHold.HoldAmount
 			}
 			storeErr := h.gatewayService.StoreVideoTaskPendingBilling(requestCtx, service.VideoTaskPlatformGrok, result.ResponseID, subject.UserID, apiKey.ID, pending)
-			if endpoint.IsSeedance() {
-				// The Seedance snapshot lives under the Grok video pending namespace
-				// (prepareSeedanceCompletionBilling loads it via the same key).
-				if storeErr != nil {
-					reqLog.Warn("grok_media.store_video_pending_billing_failed_retrying",
-						zap.Int64("account_id", account.ID),
-						zap.String("request_id", result.ResponseID),
-						zap.Error(storeErr),
-					)
-					if err2 := h.gatewayService.StoreVideoTaskPendingBilling(requestCtx, service.VideoTaskPlatformGrok, result.ResponseID, subject.UserID, apiKey.ID, pending); err2 != nil {
-						reqLog.Error("grok_media.store_video_pending_billing_failed",
-							zap.Int64("account_id", account.ID),
-							zap.String("request_id", result.ResponseID),
-							zap.Error(err2),
-						)
-					}
-				}
-			} else if storeErr != nil {
+			if storeErr != nil {
 				reqLog.Warn("grok_media.store_video_pending_billing_failed_retrying",
 					zap.Int64("account_id", account.ID),
 					zap.String("request_id", result.ResponseID),
 					zap.Error(storeErr),
 				)
-				if err2 := h.gatewayService.StoreVideoTaskPendingBilling(requestCtx, service.VideoTaskPlatformGrok, result.ResponseID, subject.UserID, apiKey.ID, pending); err2 != nil {
+				// The Seedance snapshot lives under the Grok video pending namespace
+				// (prepareSeedanceCompletionBilling loads it via the same key).
+				storeErr = h.gatewayService.StoreVideoTaskPendingBilling(requestCtx, service.VideoTaskPlatformGrok, result.ResponseID, subject.UserID, apiKey.ID, pending)
+				if storeErr != nil {
 					// Response body may already be committed; completion path will fail-closed
 					// when pending is still missing and status cannot price duration.
 					reqLog.Error("grok_media.store_video_pending_billing_failed",
 						zap.Int64("account_id", account.ID),
 						zap.String("request_id", result.ResponseID),
-						zap.Error(err2),
+						zap.Error(storeErr),
 					)
 				}
+			}
+			// hold 已随队列条目移交后台对账器（store 成功）→ 从函数级兜底
+			// 释放表移除；store 两次失败的 hold 留在表中，函数退出时释放
+			//（无队列条目，对账器永远看不到该任务，不释放即永久泄漏）。
+			if storeErr == nil && videoHold != nil {
+				handOverVideoHold(videoHold)
 			}
 		}
 		// Seedance keeps upstream's inline claim billing: the status poll observes
@@ -719,6 +760,29 @@ func recordGrokMediaUsage(
 				zap.Int64("account_id", account.ID),
 			).Error("grok_media.record_usage_failed", zap.Error(err))
 			reqLog.Debug("grok_media.record_usage_failed", zap.Error(err))
+			// Seedance inline 计费的 claim（SETNX，TTL 48h）语义是"计费已提交"
+			// 而非"计费已成功"：RecordUsage 失败（计费 DB 抖动等）必须回滚 claim，
+			// 否则用户几秒后自然重试的 status poll 会一直被 claim 挡住，
+			// 首笔失败后 48h 内计费永久丢失。仅 Seedance 状态 poll 路径持有
+			// claim（prepareSeedanceCompletionBilling），其 ResponseID 带
+			// "seedance:" 前缀；图片生成等无 claim 路径不受影响。
+			if result != nil && strings.HasPrefix(result.ResponseID, "seedance:") {
+				if releaseErr := h.gatewayService.ReleaseGrokVideoBilling(ctx, result.ResponseID, subject.UserID, apiKey.ID); releaseErr != nil {
+					logger.L().With(
+						zap.String("component", "handler.openai_gateway.grok_media"),
+						zap.Int64("user_id", subject.UserID),
+						zap.Int64("api_key_id", apiKey.ID),
+						zap.String("task_id", result.ResponseID),
+					).Error("grok_media.video_billing_claim_release_failed", zap.Error(releaseErr))
+				} else {
+					logger.L().With(
+						zap.String("component", "handler.openai_gateway.grok_media"),
+						zap.Int64("user_id", subject.UserID),
+						zap.Int64("api_key_id", apiKey.ID),
+						zap.String("task_id", result.ResponseID),
+					).Warn("grok_media.video_billing_claim_released_after_record_failure")
+				}
+			}
 		}
 	})
 }
