@@ -74,7 +74,7 @@ func TestForwardOpenAIWSV2_ClientCancellationDrainsWithoutSyntheticFailure(t *te
 		Credentials: map[string]any{"api_key": "sk-test"},
 		Extra: map[string]any{
 			"openai_apikey_responses_websockets_v2_mode": OpenAIWSIngressModeCtxPool,
-			"openai_responses_mode":                       "force_responses",
+			"openai_responses_mode":                      "force_responses",
 		},
 	}
 

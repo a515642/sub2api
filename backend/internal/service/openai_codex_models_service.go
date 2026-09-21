@@ -48,16 +48,25 @@ const (
 
 // FilterCodexModelIDsForGroup removes dedicated media-generation models,
 // wildcard mapping keys, and Codex automatic modes from a client catalog.
-// Automatic modes are retained only when the group's enabled model allowlist
-// explicitly selects the exact slug; account model mappings describe routing
-// and are not feature opt-ins. Wildcard keys such as "foo-*" are routing
-// patterns, not concrete Codex models. When the allowlist is enabled the
-// catalog is additionally restricted by FilterForListing (wildcard entries
-// expand against the catalog).
+// Automatic modes are retained only when the group's enabled custom models
+// list (models_list_config 展示配置) or model allowlist explicitly selects
+// the exact slug; account model mappings describe routing and are not
+// feature opt-ins. Wildcard keys such as "foo-*" are routing patterns, not
+// concrete Codex models. When the allowlist is enabled the catalog is
+// additionally restricted by FilterForListing (wildcard entries expand
+// against the catalog).
 func FilterCodexModelIDsForGroup(modelIDs []string, group *Group) []string {
 	explicitlyEnabled := make(map[string]struct{})
-	if group != nil && group.ModelAllowlistEnabled() {
-		for _, modelID := range group.ModelAllowlist.Models {
+	if group != nil && (group.CustomModelsListEnabled() || group.ModelAllowlistEnabled()) {
+		selected := group.ModelsListConfig.Models
+		allowlist := group.ModelAllowlist.Models
+		if !group.CustomModelsListEnabled() {
+			selected = nil
+		}
+		if !group.ModelAllowlistEnabled() {
+			allowlist = nil
+		}
+		for _, modelID := range append(append([]string(nil), selected...), allowlist...) {
 			modelID = strings.TrimSpace(modelID)
 			if strings.HasPrefix(modelID, codexAutoModelPrefix) {
 				explicitlyEnabled[modelID] = struct{}{}
@@ -152,8 +161,8 @@ func (s *OpenAIGatewayService) BuildGroupConfiguredCodexModelsManifest(
 	body, _, err = mergeConfiguredCodexModelsManifest(
 		body,
 		nil,
-		group.ModelAllowlist.Models,
-		group.ModelAllowlistEnabled(),
+		group.CodexModelsSelection(),
+		group.CustomModelsListEnabled() || group.ModelAllowlistEnabled(),
 	)
 	if err != nil {
 		return nil, false, fmt.Errorf("build group configured Codex models: %w", err)
@@ -197,14 +206,20 @@ func (s *OpenAIGatewayService) MergeGroupConfiguredCodexModels(
 	body, changed, err := mergeConfiguredCodexModelsManifest(
 		manifest.Body,
 		configuredModels,
-		group.ModelAllowlist.Models,
-		group.ModelAllowlistEnabled(),
+		group.CodexModelsSelection(),
+		group.CustomModelsListEnabled() || group.ModelAllowlistEnabled(),
 	)
 	if err != nil {
 		return fmt.Errorf("merge group configured Codex models: %w", err)
 	}
-	if group.CodexModelsManifestConfig.Enabled && group.ModelAllowlistEnabled() {
-		body, err = orderPinnedCodexModelsBySelection(body, group.ModelAllowlist)
+	if group.CodexModelsManifestConfig.Enabled && group.CustomModelsListEnabled() {
+		body, err = orderPinnedCodexModelsBySelection(body, group.ModelsListConfig.Models)
+		if err != nil {
+			return fmt.Errorf("order pinned Codex models: %w", err)
+		}
+		changed = true
+	} else if group.CodexModelsManifestConfig.Enabled && group.ModelAllowlistEnabled() {
+		body, err = orderPinnedCodexModelsByAllowlist(body, group.ModelAllowlist)
 		if err != nil {
 			return fmt.Errorf("order pinned Codex models: %w", err)
 		}
@@ -297,15 +312,22 @@ func openAIConfiguredCodexModelIDs(accounts []Account) []string {
 
 func openAIConfiguredCodexModelIDsForGroup(accounts []Account, group *Group) []string {
 	models := supplementUnmappedOpenAIModels(accounts, openAIConfiguredCodexModelIDs(accounts))
-	if group == nil || !group.ModelAllowlistEnabled() {
+	if group == nil {
+		return models
+	}
+	// 展示列表（models_list_config）与准入白名单（model_allowlist）相互独立：
+	// 两者中任一配置显式选择的模型名都要成为候选，保证“显示什么”与
+	// “允许调什么”的配置都能映射到账号实际模型。
+	selection := group.CodexModelsSelection()
+	if len(selection) == 0 {
 		return models
 	}
 
-	seen := make(map[string]struct{}, len(models)+len(group.ModelAllowlist.Models))
+	seen := make(map[string]struct{}, len(models)+len(selection))
 	for _, modelID := range models {
 		seen[modelID] = struct{}{}
 	}
-	for _, selectedModel := range group.ModelAllowlist.Models {
+	for _, selectedModel := range selection {
 		selectedModel = strings.TrimSpace(selectedModel)
 		if selectedModel == "" || strings.Contains(selectedModel, "*") {
 			continue

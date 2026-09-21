@@ -13,6 +13,16 @@ import (
 
 const groupModelAllowlistRepairMigration = "236_group_model_allowlist_repair.sql"
 
+// dropLocalModelsListConfigColumn 移除 239 恢复的本地定制列，还原 236 测试所需的
+// 「上游旧结构」前提：models_list_config 与 model_allowlist 在本 fork 中并存（239），
+// 而 236 的修复对象是上游单一列时代的残留状态，测试前必须先把本地列摘掉。
+func dropLocalModelsListConfigColumn(ctx context.Context, t *testing.T, tx *sql.Tx) {
+	t.Helper()
+
+	_, err := tx.ExecContext(ctx, `ALTER TABLE groups DROP COLUMN IF EXISTS models_list_config`)
+	require.NoError(t, err)
+}
+
 // 236 是可重放的修复迁移：235 的重命名一旦被记账就不会重跑，数据库若回到旧结构
 // （手工改回列名、按旧结构部分恢复）应用仍能启动，但所有关联 groups 的查询都会
 // 报 column groups.model_allowlist does not exist（issue #6780）。
@@ -20,6 +30,7 @@ func TestMigration236RenamesLegacyModelsListConfigColumn(t *testing.T) {
 	tx := testTx(t)
 	ctx := context.Background()
 
+	dropLocalModelsListConfigColumn(ctx, t, tx)
 	_, err := tx.ExecContext(ctx, "ALTER TABLE groups RENAME COLUMN model_allowlist TO models_list_config")
 	require.NoError(t, err)
 
@@ -50,6 +61,9 @@ func TestMigration236BackfillsWhenBothColumnsExist(t *testing.T) {
 	tx := testTx(t)
 	ctx := context.Background()
 
+	// 上游「两列并存」指的是 model_allowlist 与遗留 models_list_config；本地 239
+	// 已让两列常态并存，这里先摘掉本地列再补一个遗留值列，还原上游事故现场。
+	dropLocalModelsListConfigColumn(ctx, t, tx)
 	_, err := tx.ExecContext(ctx,
 		"ALTER TABLE groups ADD COLUMN models_list_config JSONB NOT NULL DEFAULT '{}'::jsonb")
 	require.NoError(t, err)

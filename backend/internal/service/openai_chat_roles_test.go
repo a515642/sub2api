@@ -71,7 +71,7 @@ func TestForwardAsChatCompletions_StrictDeveloperRole(t *testing.T) {
 				account.Credentials["base_url"] = target.base
 				account.Credentials["api_protocol"] = APIProtocolChatCompletions
 				account.Credentials["model_mapping"] = map[string]any{"example-alias": target.model}
-				account.Extra = map[string]any{openai_compat.ExtraKeyResponsesSupported: false}
+				account.Extra = map[string]any{openai_compat.ExtraKeyResponsesSupported: false, "openai_responses_mode": "force_chat_completions"}
 
 				recorder := httptest.NewRecorder()
 				c, _ := gin.CreateTestContext(recorder)

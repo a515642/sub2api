@@ -194,6 +194,9 @@ type AdminGroup struct {
 	DefaultMappedModel          string                                   `json:"default_mapped_model"`
 	MessagesDispatchModelConfig domain.OpenAIMessagesDispatchModelConfig `json:"messages_dispatch_model_config"`
 	ModelAllowlist              service.GroupModelAllowlist              `json:"model_allowlist"`
+	// ModelsListConfig 本地定制的 /v1/models 展示列表配置，与 model_allowlist
+	// 相互独立（展示 vs 准入）；管理端必须能回显，否则前端无法编辑该配置。
+	ModelsListConfig service.GroupModelsListConfig `json:"models_list_config"`
 	// 固定账号获取 Codex Model Manifest 配置（仅 openai 平台使用）。
 	CodexModelsManifestConfig domain.GroupCodexModelsManifestConfig `json:"codex_models_manifest_config"`
 

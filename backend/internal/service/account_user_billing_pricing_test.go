@@ -170,7 +170,6 @@ func TestGenericGatewayUsageCostUsesOpenAIAPIKeyAccountPrice(t *testing.T) {
 		1,
 		1,
 		time.Time{},
-		&recordUsageOpts{},
 	)
 	require.NotNil(t, cost)
 	require.InDelta(t, 0.004, cost.ActualCost, 1e-12)

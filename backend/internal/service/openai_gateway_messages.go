@@ -1301,7 +1301,7 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 		_ = resp.Body.Close()
 		return resultWithUsage(), s.newOpenAIFirstOutputTimeoutError(
 			c.Request.Context(), c, account, opsUpstreamProxyID(account), opsUpstreamProxyName(account),
-				startTime, originalModel, "",
+			startTime, originalModel, "",
 			firstOutputTimeout, "semantic_output", resp.Header,
 		)
 	}

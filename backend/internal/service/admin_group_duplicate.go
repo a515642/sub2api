@@ -154,6 +154,12 @@ func cloneGroupForDuplicate(source *Group, operationID string) *Group {
 			Enabled: source.ModelAllowlist.Enabled,
 			Models:  append([]string(nil), source.ModelAllowlist.Models...),
 		},
+		// models_list_config 是本地定制的 /v1/models 展示列表配置，与 model_allowlist
+		// 相互独立；复制组必须同样深拷贝，否则副本静默丢失展示功能。
+		ModelsListConfig: GroupModelsListConfig{
+			Enabled: source.ModelsListConfig.Enabled,
+			Models:  append([]string(nil), source.ModelsListConfig.Models...),
+		},
 		// 固定账号 manifest 配置指向源分组的账号 ID，复制后成员关系可能变化，重置为关闭且列表为空。
 		CodexModelsManifestConfig:   GroupCodexModelsManifestConfig{},
 		RPMLimit:                    source.RPMLimit,

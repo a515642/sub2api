@@ -95,13 +95,19 @@ func TestForwardAsChatCompletions_CancelsUpstreamBeforeClosingBody(t *testing.T)
 		httpUpstream: &contextBoundHTTPUpstream{body: stream},
 	}
 
+	// 本地定制要求显式选择上游协议；此用例验证的是 Responses 转换流的中途取消，
+	// 共享 fixture 的 force_chat_completions 会把请求分流到 raw CC 路径，
+	// 这里单独配 force_responses 保持它走被测链路。
+	account := rawChatCompletionsTestAccount()
+	account.Extra = map[string]any{"openai_responses_mode": "force_responses"}
+
 	type forwardResult struct {
 		result *OpenAIForwardResult
 		err    error
 	}
 	resultCh := make(chan forwardResult, 1)
 	go func() {
-		result, err := svc.ForwardAsChatCompletions(context.Background(), c, rawChatCompletionsTestAccount(), body, "", "gpt-5.1")
+		result, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body, "", "gpt-5.1")
 		resultCh <- forwardResult{result: result, err: err}
 	}()
 

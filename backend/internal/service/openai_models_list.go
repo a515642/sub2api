@@ -213,6 +213,12 @@ func projectAccountModelsBody(body []byte, account *Account, group *Group, codex
 	if group.ModelAllowlistEnabled() {
 		candidates = append(candidates, group.ModelAllowlist.Models...)
 	}
+	// 展示列表（models_list_config）与准入白名单相互独立：
+	// 这里把展示配置的条目也纳入候选，保证“显示什么”的配置在 pinned
+	// 投影中可见（上游引入该链路时即读 CustomModelsListEnabled）。
+	if group.CustomModelsListEnabled() {
+		candidates = append(candidates, group.ModelsListConfig.Models...)
+	}
 	projected := make([]json.RawMessage, 0, len(candidates))
 	seen := make(map[string]struct{}, len(candidates))
 	for _, id := range candidates {
@@ -308,6 +314,11 @@ func (s *OpenAIGatewayService) FetchPinnedOpenAIModelsList(ctx context.Context, 
 	if group.ModelAllowlistEnabled() {
 		models = selectModelCatalogEntries(byID, group.ModelAllowlist.FilterForListing(modelIDs))
 	}
+	// 展示列表（models_list_config）独立于准入白名单：决定 pinned 发现
+	// 最终列表显示什么（条目顺序即展示配置的顺序）。
+	if group.CustomModelsListEnabled() {
+		models = selectModelCatalogEntries(byID, group.ModelsListConfig.Models)
+	}
 	body, err := json.Marshal(struct {
 		Object string            `json:"object"`
 		Data   []json.RawMessage `json:"data"`
@@ -335,7 +346,33 @@ func selectModelCatalogEntries(byID map[string]json.RawMessage, selected []strin
 	return models
 }
 
-func orderPinnedCodexModelsBySelection(body []byte, allowlist GroupModelAllowlist) ([]byte, error) {
+// orderPinnedCodexModelsBySelection 按展示列表（models_list_config）的精确条目
+// 顺序重排 pinned manifest —— fork 语义：展示条目是具体模型名。
+func orderPinnedCodexModelsBySelection(body []byte, selected []string) ([]byte, error) {
+	envelope, entries, err := modelCatalogEntries(body, "models")
+	if err != nil {
+		return nil, err
+	}
+	byID := make(map[string]json.RawMessage, len(entries))
+	for _, raw := range entries {
+		var entry struct {
+			Slug string `json:"slug"`
+		}
+		if err := json.Unmarshal(raw, &entry); err != nil {
+			return nil, err
+		}
+		byID[entry.Slug] = raw
+	}
+	envelope["models"], err = json.Marshal(selectModelCatalogEntries(byID, selected))
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(envelope)
+}
+
+// orderPinnedCodexModelsByAllowlist 按准入白名单（model_allowlist）重排 pinned
+// manifest —— 上游语义：FilterForListing 通配展开、按 source 顺序。
+func orderPinnedCodexModelsByAllowlist(body []byte, allowlist GroupModelAllowlist) ([]byte, error) {
 	envelope, entries, err := modelCatalogEntries(body, "models")
 	if err != nil {
 		return nil, err

@@ -1233,7 +1233,7 @@ func rawChatCompletionsTestAccount() *Account {
 		Credentials: map[string]any{
 			"api_key":  "sk-test",
 			"base_url": "http://upstream.example",
-		}, Extra: map[string]any{"openai_responses_mode": "force_responses"},
+		}, Extra: map[string]any{"openai_responses_mode": "force_chat_completions"},
 	}
 }
 

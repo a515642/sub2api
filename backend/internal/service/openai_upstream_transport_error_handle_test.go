@@ -227,8 +227,8 @@ func TestForwardAsRawChatCompletions_TransportErrorFailsOver(t *testing.T) {
 		Platform:    PlatformOpenAI,
 		Type:        AccountTypeAPIKey,
 		Credentials: map[string]any{"api_key": "sk-test", "base_url": "https://opencode.ai/zen/v1"}, Extra: map[string]any{"openai_responses_mode": "force_responses"},
-		ProxyID:     &proxyID,
-		Proxy:       proxy,
+		ProxyID: &proxyID,
+		Proxy:   proxy,
 	}
 	c, rec := newOpenAITransportErrTestContext()
 	body := []byte(`{"model":"deepseek-v4-flash-free","messages":[{"role":"user","content":"hello"}]}`)

@@ -1150,6 +1150,17 @@ func (h *GatewayHandler) Models(c *gin.Context) {
 			writeAllowlistedModelsList(c, service.PlatformComposite, apiKey.Group.ModelAllowlist.FilterForListing(source))
 			return
 		}
+		// models_list_config 是本地定制的展示列表（与准入白名单 model_allowlist
+		// 相互独立）：只影响 /v1/models 显示什么，不影响请求允许调什么。
+		if apiKey != nil && apiKey.Group != nil && apiKey.Group.CustomModelsListEnabled() {
+			customModels := filterModelsByCustomList(
+				availableModels,
+				defaultModelIDsForPlatform(service.PlatformComposite),
+				apiKey.Group.ModelsListConfig.Models,
+			)
+			writeCustomModelsList(c, service.PlatformComposite, customModels)
+			return
+		}
 		if len(availableModels) > 0 {
 			writeModelsList(c, service.PlatformComposite, availableModels)
 			return
@@ -1163,6 +1174,15 @@ func (h *GatewayHandler) Models(c *gin.Context) {
 	if apiKey != nil && apiKey.Group != nil && apiKey.Group.ModelAllowlistEnabled() {
 		source := modelListingSource(platform, availableModels, defaultModelIDsForPlatform(platform))
 		writeAllowlistedModelsList(c, platform, apiKey.Group.ModelAllowlist.FilterForListing(source))
+		return
+	}
+	if apiKey != nil && apiKey.Group != nil && apiKey.Group.CustomModelsListEnabled() {
+		customModels := filterModelsByCustomList(
+			customModelsListSource(platform, availableModels, defaultModelIDsForPlatform(platform)),
+			defaultModelIDsForPlatform(platform),
+			apiKey.Group.ModelsListConfig.Models,
+		)
+		writeCustomModelsList(c, platform, customModels)
 		return
 	}
 
@@ -1245,6 +1265,10 @@ func (h *GatewayHandler) codexModelIDsForGroup(ctx context.Context, group *servi
 			}
 			return group.ModelAllowlist.FilterForListing(source)
 		}
+		// 展示列表（models_list_config）独立于白名单：决定 Codex picker 显示什么。
+		if group.CustomModelsListEnabled() {
+			return filterModelsByCustomList(availableModels, fallbackModels, group.ModelsListConfig.Models)
+		}
 		if len(availableModels) > 0 {
 			return availableModels
 		}
@@ -1255,6 +1279,13 @@ func (h *GatewayHandler) codexModelIDsForGroup(ctx context.Context, group *servi
 	fallbackModels := defaultCodexModelIDsForPlatform(platform)
 	if group.ModelAllowlistEnabled() {
 		return group.ModelAllowlist.FilterForListing(modelListingSource(platform, availableModels, fallbackModels))
+	}
+	if group.CustomModelsListEnabled() {
+		return filterModelsByCustomList(
+			customModelsListSource(platform, availableModels, fallbackModels),
+			fallbackModels,
+			group.ModelsListConfig.Models,
+		)
 	}
 	if len(availableModels) > 0 {
 		return availableModels
@@ -1320,6 +1351,89 @@ func writeAllowlistedModelsList(c *gin.Context, platform string, modelIDs []stri
 		return
 	}
 	writeModelsList(c, platform, modelIDs)
+}
+
+// writeCustomModelsList 按平台形状输出 models_list_config（展示列表）过滤后的
+// 模型列表；OpenAI 平台保持 OpenAI 响应形状（含 created/owned_by 等元数据）。
+func writeCustomModelsList(c *gin.Context, platform string, modelIDs []string) {
+	if platform == service.PlatformOpenAI {
+		writeOpenAIModelsList(c, modelIDs)
+		return
+	}
+	writeModelsList(c, platform, modelIDs)
+}
+
+// customModelsListSource 汇总展示列表的候选来源；Anthropic 平台把账号映射键
+// 与平台默认列表取并集（OAuth 账号没有映射键时也能命中默认列表条目）。
+func customModelsListSource(platform string, availableModels, fallbackModels []string) []string {
+	if platform == service.PlatformAnthropic && len(availableModels) > 0 {
+		return mergeModelIDs(availableModels, fallbackModels)
+	}
+	return availableModels
+}
+
+// filterModelsByCustomList 按展示列表（models_list_config）条目顺序生成输出：
+// 只有出现在 source（账号映射键 ∪ 平台默认列表）的模式集合中的条目才输出，
+// source 通配模式按前缀匹配，另有 Claude 归一化（-thinking 后缀）宽容规则。
+func filterModelsByCustomList(availableModels, fallbackModels, selectedModels []string) []string {
+	if len(selectedModels) == 0 {
+		return availableModels
+	}
+	source := availableModels
+	if len(source) == 0 {
+		source = fallbackModels
+	}
+	if len(source) == 0 {
+		return nil
+	}
+
+	allowed := make([]string, 0, len(source))
+	for _, model := range source {
+		model = strings.TrimSpace(model)
+		if model != "" {
+			allowed = append(allowed, model)
+		}
+	}
+
+	seen := make(map[string]struct{}, len(selectedModels))
+	filtered := make([]string, 0, len(selectedModels))
+	for _, model := range selectedModels {
+		model = strings.TrimSpace(model)
+		if model == "" {
+			continue
+		}
+		if !customModelsListAllowsModel(allowed, model) {
+			continue
+		}
+		if _, ok := seen[model]; ok {
+			continue
+		}
+		seen[model] = struct{}{}
+		filtered = append(filtered, model)
+	}
+	return filtered
+}
+
+// customModelsListAllowsModel 精确相等、source 通配模式的前缀匹配，以及
+// Claude 归一化（-thinking 后缀）后的精确匹配。
+func customModelsListAllowsModel(availablePatterns []string, model string) bool {
+	for _, pattern := range availablePatterns {
+		if pattern == model {
+			return true
+		}
+		if strings.HasSuffix(pattern, "*") && strings.HasPrefix(model, strings.TrimSuffix(pattern, "*")) {
+			return true
+		}
+	}
+	normalizedClaudeModel := claude.NormalizeModelID(strings.TrimSuffix(model, "-thinking"))
+	if normalizedClaudeModel != model {
+		for _, pattern := range availablePatterns {
+			if pattern == normalizedClaudeModel {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 type grokReasoningEffortOption struct {
