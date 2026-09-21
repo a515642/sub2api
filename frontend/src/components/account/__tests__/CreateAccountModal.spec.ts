@@ -465,6 +465,23 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     })
   })
 
+  it('uses only the first API key line when previewing upstream models with multi-line input', async () => {
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'OpenAI')
+    await selectButtonByText(wrapper, 'API Key')
+    await wrapper.get('[data-testid="openai-responses-mode-select"]').setValue('force_responses')
+    await wrapper
+      .get('[data-testid="account-api-key-input"]')
+      .setValue('sk-first\nsk-second\n\nsk-third')
+
+    expect(wrapper.getComponent(ModelWhitelistSelectorStub).props('syncCredentials')).toMatchObject({
+      api_key: 'sk-first'
+    })
+    expect(wrapper.getComponent(ModelWhitelistSelectorStub).props('syncCredentials')).not.toMatchObject({
+      api_key: expect.stringContaining('\n')
+    })
+  })
+
   it('exposes Agent Identity in the OpenAI authorization methods', async () => {
     const wrapper = mountModal()
     await selectButtonByText(wrapper, 'OpenAI')
