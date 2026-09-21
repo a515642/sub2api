@@ -2,6 +2,13 @@
 /docs-local/
 .codex
 
+# 本地数据库导出物：单个文件 60~320MB，超过 GitHub 100MB 限制，
+# 一旦被 git add -A 暂存就会让整个分支推不上去（曾随 upstream 0.2.7 的
+# 合并提交误入库）。保留在磁盘上，但不进版本库。
+migration/*.dump
+migration/*.tgz
+/sub2api-migration.sql.gz
+
 # ===================
 # Go 后端
 # ===================
