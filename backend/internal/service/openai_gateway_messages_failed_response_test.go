@@ -43,6 +43,7 @@ func TestForwardAsAnthropic_BufferedResponseFailed_ReturnsError(t *testing.T) {
 	}
 
 	account := rawChatCompletionsTestAccount()
+	account.Extra = map[string]any{"openai_responses_mode": "force_responses"}
 	_, err := svc.ForwardAsAnthropic(context.Background(), c, account, body, "", "")
 
 	require.Error(t, err, "non-cyber response.failed must return an error, not swallow as 200")
@@ -71,6 +72,7 @@ func TestForwardAsAnthropic_StreamingResponseFailed_ReturnsError(t *testing.T) {
 	}
 
 	account := rawChatCompletionsTestAccount()
+	account.Extra = map[string]any{"openai_responses_mode": "force_responses"}
 	_, err := svc.ForwardAsAnthropic(context.Background(), c, account, body, "", "")
 
 	require.Error(t, err, "streaming response.failed must return an error")
@@ -108,6 +110,7 @@ func TestForwardAsAnthropic_StreamingBareErrorAfterOutputIsVisible(t *testing.T)
 	}
 
 	account := rawChatCompletionsTestAccount()
+	account.Extra = map[string]any{"openai_responses_mode": "force_responses"}
 	_, err := svc.ForwardAsAnthropic(context.Background(), c, account, body, "", "")
 
 	require.Error(t, err)
@@ -147,6 +150,7 @@ func TestForwardAsAnthropic_StreamingBareErrorBeforeOutputFailsOver(t *testing.T
 	}
 
 	account := rawChatCompletionsTestAccount()
+	account.Extra = map[string]any{"openai_responses_mode": "force_responses"}
 	_, err := svc.ForwardAsAnthropic(context.Background(), c, account, body, "", "")
 
 	require.Error(t, err)
@@ -174,7 +178,9 @@ func TestForwardAsAnthropic_StreamingGenericBareErrorBeforeOutputIsNotHiddenByFa
 	}}
 	svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig(), httpUpstream: upstream}
 
-	_, err := svc.ForwardAsAnthropic(context.Background(), c, rawChatCompletionsTestAccount(), body, "", "")
+	account := rawChatCompletionsTestAccount()
+	account.Extra = map[string]any{"openai_responses_mode": "force_responses"}
+	_, err := svc.ForwardAsAnthropic(context.Background(), c, account, body, "", "")
 
 	require.Error(t, err)
 	var failoverErr *UpstreamFailoverError
@@ -204,6 +210,7 @@ func TestForwardAsAnthropic_BufferedResponseFailed_Failover(t *testing.T) {
 	}
 
 	account := rawChatCompletionsTestAccount()
+	account.Extra = map[string]any{"openai_responses_mode": "force_responses"}
 	_, err := svc.ForwardAsAnthropic(context.Background(), c, account, body, "", "")
 
 	require.Error(t, err)

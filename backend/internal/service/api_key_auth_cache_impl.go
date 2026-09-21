@@ -14,7 +14,7 @@ import (
 	"github.com/dgraph-io/ristretto"
 )
 
-const apiKeyAuthSnapshotVersion = 21 // v21: group first-output failover policy fields
+const apiKeyAuthSnapshotVersion = 25 // v25: merge — first-output failover fields + model_allowlist + codex manifest + models_list_config
 
 type apiKeyAuthCacheConfig struct {
 	l1Size        int
@@ -418,11 +418,16 @@ func (s *APIKeyService) snapshotFromAPIKey(ctx context.Context, apiKey *APIKey) 
 			SupportedModelScopes:              apiKey.Group.SupportedModelScopes,
 			AllowMessagesDispatch:             apiKey.Group.AllowMessagesDispatch,
 			AllowLive:                         apiKey.Group.AllowLive,
+			ForceOpenAIFast:                   apiKey.Group.ForceOpenAIFast,
+			FreeOpenAIFast:                    apiKey.Group.FreeOpenAIFast,
 			DefaultMappedModel:                apiKey.Group.DefaultMappedModel,
 			MessagesDispatchModelConfig:       apiKey.Group.MessagesDispatchModelConfig,
+			ModelAllowlist:                    apiKey.Group.ModelAllowlist,
+			CodexModelsManifestConfig:         apiKey.Group.CodexModelsManifestConfig,
 			ModelsListConfig:                  apiKey.Group.ModelsListConfig,
 			RPMLimit:                          apiKey.Group.RPMLimit,
 			MaxReasoningEffort:                apiKey.Group.MaxReasoningEffort,
+			MaxReasoningEffortOverLimit:       apiKey.Group.MaxReasoningEffortOverLimit,
 			ReasoningEffortMappings:           apiKey.Group.ReasoningEffortMappings,
 			PeakRateEnabled:                   apiKey.Group.PeakRateEnabled,
 			PeakStart:                         apiKey.Group.PeakStart,
@@ -519,11 +524,16 @@ func (s *APIKeyService) snapshotToAPIKey(key string, snapshot *APIKeyAuthSnapsho
 			SupportedModelScopes:              snapshot.Group.SupportedModelScopes,
 			AllowMessagesDispatch:             snapshot.Group.AllowMessagesDispatch,
 			AllowLive:                         snapshot.Group.AllowLive,
+			ForceOpenAIFast:                   snapshot.Group.ForceOpenAIFast,
+			FreeOpenAIFast:                    snapshot.Group.FreeOpenAIFast,
 			DefaultMappedModel:                snapshot.Group.DefaultMappedModel,
 			MessagesDispatchModelConfig:       snapshot.Group.MessagesDispatchModelConfig,
+			ModelAllowlist:                    snapshot.Group.ModelAllowlist,
+			CodexModelsManifestConfig:         snapshot.Group.CodexModelsManifestConfig,
 			ModelsListConfig:                  snapshot.Group.ModelsListConfig,
 			RPMLimit:                          snapshot.Group.RPMLimit,
 			MaxReasoningEffort:                snapshot.Group.MaxReasoningEffort,
+			MaxReasoningEffortOverLimit:       snapshot.Group.MaxReasoningEffortOverLimit,
 			ReasoningEffortMappings:           snapshot.Group.ReasoningEffortMappings,
 			PeakRateEnabled:                   snapshot.Group.PeakRateEnabled,
 			PeakStart:                         snapshot.Group.PeakStart,

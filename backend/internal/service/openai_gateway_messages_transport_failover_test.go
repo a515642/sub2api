@@ -32,6 +32,7 @@ func TestForwardAsAnthropic_TransportError_ReturnsFailoverError(t *testing.T) {
 	}
 
 	account := rawChatCompletionsTestAccount()
+	account.Extra = map[string]any{"openai_responses_mode": "force_responses"}
 	_, err := svc.ForwardAsAnthropic(context.Background(), c, account, body, "", "")
 
 	require.Error(t, err)
@@ -58,6 +59,7 @@ func TestForwardAsAnthropic_TransportError_DoesNotWriteResponse(t *testing.T) {
 	}
 
 	account := rawChatCompletionsTestAccount()
+	account.Extra = map[string]any{"openai_responses_mode": "force_responses"}
 	_, _ = svc.ForwardAsAnthropic(context.Background(), c, account, body, "", "")
 
 	require.Equal(t, http.StatusOK, rec.Code, "transport error must not write HTTP response — handler owns the response for failover")
@@ -84,6 +86,7 @@ func TestForwardAsAnthropic_TransportError_ClientCanceled_NoFailover(t *testing.
 	}
 
 	account := rawChatCompletionsTestAccount()
+	account.Extra = map[string]any{"openai_responses_mode": "force_responses"}
 	_, err := svc.ForwardAsAnthropic(context.Background(), c, account, body, "", "")
 
 	require.Error(t, err)

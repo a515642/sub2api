@@ -508,6 +508,7 @@ export default {
       leaveEmptyToKeep: 'Leave empty to keep current password',
       generatePassword: 'Generate random password',
       copyPassword: 'Copy password',
+      passwordCopied: 'Password copied',
       creating: 'Creating...',
       updating: 'Updating...',
       form: {
@@ -771,6 +772,7 @@ export default {
         clearAllConfirm: 'Clear daily / weekly / monthly limits for ALL platforms? All platforms will become "unlimited" with no local undo — you must manually re-enter values before saving.',
         reset: {
           button: 'Reset window',
+          unavailable: 'No limit configured for this platform, so there is no usage window to reset',
           confirm: 'Reset the {window} usage for {platform} for this user? This is effective immediately.',
           success: 'Reset {platform} {window} usage',
           failed: 'Reset failed',
@@ -817,7 +819,7 @@ export default {
         name: 'Name',
         id: 'ID',
         platform: 'Platform',
-         rateMultiplier: 'User Price Multiplier',
+        rateMultiplier: 'User Price Multiplier',
         rpmOverride: 'RPM Override',
         rpmOverrideHint: 'Per-user RPM cap in this group; empty = group default; 0 = unlimited',
         rateDefault: 'default',
@@ -843,7 +845,7 @@ export default {
       accountsAvailable: 'Avail:',
       accountsRateLimited: 'Limited:',
       accountsTotal: 'Total:',
-      accountsUnit: '',
+      accountsUnit: 'accounts',
       rateAndAccounts: '{rate}x user price multiplier · {count} accounts',
       accountsCount: '{count} accounts',
       rateLabel: 'rate',
@@ -866,8 +868,8 @@ export default {
         namePlaceholder: 'Enter group name',
         descriptionLabel: 'Description',
         descriptionPlaceholder: 'Enter description (optional)',
-         rateMultiplierLabel: 'User Price Multiplier',
-         rateMultiplierHint: 'Multiplier applied to the model base price for user billing; 1.0 = base price, 0.5 = half price, 2.0 = double. This is not the account cost multiplier.',
+        rateMultiplierLabel: 'User Price Multiplier',
+        rateMultiplierHint: 'Multiplier applied to the model base price for user billing; 1.0 = base price, 0.5 = half price, 2.0 = double. This is not the account cost multiplier.',
         rpmLimit: 'Requests Per Minute (RPM)',
         rpmLimitPlaceholder: '0 = unlimited',
         rpmLimitHint: 'Max requests per minute for each user in this group; 0 = unlimited. Once set, it takes over per-user rate limiting in this group (overrides the user-level rpm_limit fallback).',
@@ -878,19 +880,36 @@ export default {
         firstOutputFailoverHint: 'Applies only to streaming requests using an OpenAI API Key pool. If no valid first token arrives in time, another account is tried; the final attempt waits normally.',
         maxReasoningEffort: 'Max reasoning effort',
         maxReasoningEffortUnlimited: 'Unlimited (follow request)',
-        maxReasoningEffortHint: 'Limits explicit OpenAI reasoning effort requests only. For Composite groups, it applies only to requests resolved to OpenAI. Higher values are capped; omitted effort stays omitted. The ceiling takes precedence over reasoning effort mappings.',
+        maxReasoningEffortHint: 'Limits explicit Anthropic and OpenAI reasoning effort requests. For Composite groups, it applies to the resolved target platform. Omitted effort stays omitted. The ceiling takes precedence over reasoning effort mappings.',
+        maxReasoningEffortOverLimit: 'Over-limit access control',
+        maxReasoningEffortOverLimitDowngrade: 'Automatically downgrade when over limit',
+        maxReasoningEffortOverLimitDeny: 'Deny access',
+        maxReasoningEffortOverLimitHint: 'Applies after a ceiling is set. Downgrade rewrites values above the ceiling to the ceiling. Deny rejects the request.',
         reasoningEffortMappings: 'Reasoning effort mappings',
+        reasoningEffortMappingsHint: 'Type and model can both be left empty to match every model. One type and model can hold multiple request mappings, for example prefix gpt mapping both high and xhigh to medium. Choose Deny as the forwarded value to reject that request value. Exact matches beat affixes, and longer affixes beat shorter ones.',
         addReasoningEffortMapping: 'Add mapping',
+        addReasoningEffortPair: 'Add request value',
         removeReasoningEffortMapping: 'Remove mapping',
+        removeReasoningEffortPair: 'Remove request value',
+        reasoningEffortMatchType: 'Type',
+        reasoningEffortModel: 'Model',
+        reasoningEffortMatchExact: 'Exact',
+        reasoningEffortMatchPrefix: 'Prefix',
+        reasoningEffortMatchSuffix: 'Suffix',
+        reasoningEffortMatchTypePlaceholder: 'All models',
+        reasoningEffortModelPlaceholder: 'Empty = all / gpt / gpt-5.4',
         reasoningEffortFrom: 'Request value',
         reasoningEffortTo: 'Forwarded value',
+        reasoningEffortToDeny: 'Deny',
         reasoningEffortFromPlaceholder: 'Select A',
         reasoningEffortToPlaceholder: 'Select B',
         fromRequired: 'Select request value A',
         toRequired: 'Select forwarded value B',
         unsupportedFrom: 'Request value is not supported by this platform',
         unsupportedTo: 'Forwarded value is not supported by this platform',
-        duplicateFrom: 'Request value A must be unique',
+        unsupportedMatchType: 'Match type must be exact, prefix, or suffix',
+        duplicateFrom: 'Request value A must be unique within the same model scope',
+        duplicateScope: 'Type and model combination must be unique',
         exclusiveLabel: 'Exclusive Group',
         exclusiveHint: 'Exclusive group, can be manually assigned to users',
         platformLabel: 'Platform Restriction',
@@ -915,7 +934,7 @@ export default {
       groupCreatedSuccess: 'Group created successfully',
       groupUpdatedSuccess: 'Group updated successfully',
       groupDeletedSuccess: 'Group deleted successfully',
-       rateMultiplierHint: 'User billing multiplier: base model cost × effective multiplier. Account cost multiplier is configured separately.',
+      rateMultiplierHint: 'User billing multiplier: base model cost × effective multiplier. Account cost multiplier is configured separately.',
       exclusiveHint: 'Exclusive group, manually assign to specific users',
       exclusiveTooltip: {
         title: 'What is an exclusive group?',
@@ -939,9 +958,9 @@ export default {
       failedToSave: 'Failed to save group',
       failedToDelete: 'Failed to delete group',
       nameRequired: 'Please enter group name',
-       rateMultipliers: 'User Price Multipliers',
-       rateMultipliersTitle: 'User Price Multiplier Management',
-       addUserRate: 'Add User Price Multiplier',
+        rateMultipliers: 'User Price Multipliers',
+        rateMultipliersTitle: 'User Price Multiplier Management',
+        addUserRate: 'Add User Price Multiplier',
       rpmOverrides: 'RPM Overrides',
       rpmOverridesTitle: 'Group RPM Overrides',
       addUserRpm: 'Add User RPM Override',
@@ -975,6 +994,8 @@ export default {
         kimi: 'Kimi',
         zhipu: 'Zhipu GLM',
         deepseek: 'DeepSeek',
+        minimax: 'MiniMax',
+        opencode_go: 'OpenCode',
         composite: 'Composite',
       },
       deleteConfirm:
@@ -1074,14 +1095,36 @@ export default {
         bufferRangeError: 'Safety buffer must be between 0 and 99.99',
         sumTooHigh: 'Min gross margin plus safety buffer must be less than 100%, otherwise every account would be excluded'
       },
-      modelsList: {
-        title: 'Custom /v1/models Model List',
-        hint: 'Only changes the /v1/models response. Whitelist model calls and account routing are unchanged.',
-        loading: 'Loading model list...',
-        empty: 'No displayable models',
+      modelAllowlist: {
+        title: 'Model Allowlist',
+        hint: 'When enabled, models outside the allowlist are rejected with 404 model_not_found, and model listing endpoints only show allowlisted models. Entries support exact model IDs and trailing * wildcards. Note: Claude Code probes with haiku-family models for titles/summaries and /messages/count_tokens is also allowlist-controlled, so make sure the small models you need are selected too.',
+        loading: 'Loading candidate models...',
+        empty: 'No candidate models; add custom entries below',
         selectedSummary: 'Selected {selected} / {total}',
         selectAll: 'Select all',
-        invertSelection: 'Invert'
+        invertSelection: 'Invert',
+        wildcardTag: 'wildcard',
+        customPlaceholder: 'Custom entry, e.g. claude-* or gpt-5.5-codex',
+        addCustom: 'Add',
+        emptySelectionError: 'The model allowlist is enabled; select or add at least one model entry',
+        errors: {
+          empty: 'Please enter a model entry',
+          invalidWildcard: 'Wildcard * is only allowed at the end of an entry',
+          duplicate: 'This entry already exists'
+        }
+      },
+      codexModelsManifest: {
+        title: 'Pinned Accounts for Model Lists',
+        hint: 'When enabled, ordinary model lists and Codex Model Manifest are discovered from the pinned accounts first, then merged and filtered using account mappings and the group model list. Rate-limited or overloaded pinned accounts are still used.',
+        enable: 'Fetch model lists with specific accounts',
+        enabledHint: 'Accounts are limited to OpenAI accounts bound to this group, at most 10.',
+        disabledHint: 'Disabled: ordinary lists use local mappings or defaults; Codex uses a local catalog when configured, otherwise scheduler discovery.',
+        accounts: 'Pinned accounts',
+        searchPlaceholder: 'Search accounts (OpenAI accounts in this group)',
+        searchEmpty: 'No matching accounts',
+        fallback: 'Fall back to the scheduler when all pinned accounts are unavailable',
+        fallbackHint: 'Off: return 503 / the upstream error. On: fall back to the existing scheduler path.',
+        selectAtLeastOne: 'Select at least one account after enabling pinned accounts'
       },
       compositeRoutes: {
         action: 'Routes',
@@ -1172,6 +1215,13 @@ export default {
         unsupportedMessage: 'This Sub2API server cannot generate the required Live attestation. Live will not work even if enabled. Continue anyway?',
         enableAnyway: 'Enable anyway'
       },
+      openaiFast: {
+        title: 'OpenAI Fast mode',
+        force: 'Force Fast (priority)',
+        hint: 'Forces service_tier=priority on OpenAI requests in this group. The global Fast/Flex policy can still filter or block it. New requests update immediately after saving; existing WebSocket sessions must reconnect.',
+        free: 'Free Fast',
+        freeHint: 'Fast requests in this group still use the priority tier, but customers are charged the equivalent Standard price.'
+      },
       invalidRequestFallback: {
         title: 'Invalid Request Fallback Group',
         hint: 'Triggered only when upstream explicitly returns prompt too long. Leave empty to disable fallback.',
@@ -1205,12 +1255,6 @@ export default {
         searchAccountPlaceholder: 'Search accounts...',
         accountsHint: 'Select accounts to prioritize for this model pattern'
       },
-      mcpXml: {
-        title: 'MCP XML Protocol Injection',
-        tooltip: 'When enabled, if the request contains MCP tools, an XML format call protocol prompt will be injected into the system prompt. Disable this to avoid interference with certain clients.',
-        enabled: 'Enabled',
-        disabled: 'Disabled'
-      },
       claudeMaxSimulation: {
         title: 'Claude Max Usage Simulation',
         tooltip:
@@ -1218,6 +1262,12 @@ export default {
         enabled: 'Enabled (simulate 1h cache)',
         disabled: 'Disabled',
         hint: 'Only token categories in usage billing logs are adjusted. No per-request mapping state is persisted.'
+      },
+      mcpXml: {
+        title: 'MCP XML Protocol Injection',
+        tooltip: 'When enabled, if the request contains MCP tools, an XML format call protocol prompt will be injected into the system prompt. Disable this to avoid interference with certain clients.',
+        enabled: 'Enabled',
+        disabled: 'Disabled'
       },
       supportedScopes: {
         title: 'Supported Model Families',

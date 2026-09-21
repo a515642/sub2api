@@ -59,8 +59,9 @@ func TestProbeOpenAIAPIKeyResponsesSupportCNProviders(t *testing.T) {
 	}{
 		{name: "deepseek adaptive supports responses", id: 201, platform: PlatformDeepseek, protocol: APIProtocolAdaptive, wantSupport: true},
 		{name: "deepseek chat keeps explicit mode", id: 202, platform: PlatformDeepseek, protocol: APIProtocolChatCompletions, wantSupport: false},
-		{name: "kimi adaptive keeps explicit mode", id: 203, platform: PlatformKimi, protocol: APIProtocolAdaptive, wantSupport: false},
-		{name: "zhipu adaptive keeps explicit mode", id: 204, platform: PlatformZhipu, protocol: APIProtocolAdaptive, wantSupport: false},
+		{name: "kimi adaptive supports responses", id: 203, platform: PlatformKimi, protocol: APIProtocolAdaptive, wantSupport: true},
+		{name: "kimi responses protocol supports responses", id: 205, platform: PlatformKimi, protocol: APIProtocolResponses, wantSupport: true},
+		{name: "zhipu adaptive falls back to chat", id: 204, platform: PlatformZhipu, protocol: APIProtocolAdaptive, wantSupport: false},
 	}
 
 	for _, tc := range tests {
@@ -84,7 +85,7 @@ func TestProbeOpenAIAPIKeyResponsesSupportCNProviders(t *testing.T) {
 			updates := <-updateCalls
 			require.Equal(t, tc.wantSupport, updates[openai_compat.ExtraKeyResponsesSupported])
 			_, hasMode := updates[openai_compat.ExtraKeyResponsesMode]
-			require.False(t, hasMode)
+			require.False(t, hasMode, "探测只落诊断标记，不得写入路由 mode（本地设计：路由只认显式配置）")
 		})
 	}
 }

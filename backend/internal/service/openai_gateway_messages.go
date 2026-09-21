@@ -34,11 +34,14 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	promptCacheKey string,
 	defaultMappedModel string,
 ) (*OpenAIForwardResult, error) {
+	// 本地定制：platform=openai 的 API Key 账号必须显式选择上游协议（mode），
+	// 探测标记仅作诊断不参与路由。
 	if account != nil && account.Platform == PlatformOpenAI && account.Type == AccountTypeAPIKey {
 		if err := openai_compat.ValidateExplicitResponsesMode(account.Extra); err != nil {
 			return nil, fmt.Errorf("openai api key upstream protocol is not configured: %w", err)
 		}
 	}
+	rememberOpenCodeInboundBody(c, body)
 	beginUpstreamResponseModelObservation(c)
 	ClearActualOpenAIUpstreamEndpoint(c)
 	if shouldForwardOpenAIResponsesViaRawChatCompletions(account) {
@@ -49,12 +52,23 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		return nil, err
 	}
 
-	// 入口分流（国产供应商 Anthropic 协议）：上游为供应商原生 Anthropic 端点时，
-	// /v1/messages 请求零转换直通（仅模型名映射 + 少量 body 清洗），完整保留
-	// thinking / tool_use / cache 语义，适配 Claude Code 等原生客户端。
-	// 必须先于 ShouldUseResponsesAPI 分流：Anthropic 协议账号经 probe 落标
-	// openai_responses_supported=false，会先命中下方的 CC 直转分支。
-	if account.IsAnthropicProtocol() || account.IsAdaptiveAPIProtocol() {
+	// OpenCode Go：按模型原生协议分流。规则未命中兜底 Chat Completions。
+	if account.IsOpenCodeGo() {
+		mapped := resolveOpenCodeGoMappedModel(account, body, defaultMappedModel)
+		switch openCodeGoNativeProtocol(account, mapped) {
+		case APIProtocolAnthropic:
+			return s.forwardAnthropicViaNativeAnthropicEndpoint(ctx, c, account, body, defaultMappedModel)
+		case APIProtocolResponses:
+			break
+		default:
+			return s.forwardAnthropicViaRawChatCompletions(ctx, c, account, body, defaultMappedModel)
+		}
+	} else if account.IsAnthropicProtocol() || account.IsAdaptiveAPIProtocol() {
+		// 入口分流（国产供应商 Anthropic 协议）：上游为供应商原生 Anthropic 端点时，
+		// /v1/messages 请求零转换直通（仅模型名映射 + 少量 body 清洗），完整保留
+		// thinking / tool_use / cache 语义，适配 Claude Code 等原生客户端。
+		// 必须先于 ShouldUseResponsesAPI 分流：Anthropic 协议账号经 probe 落标
+		// openai_responses_supported=false，会先命中下方的 CC 直转分支。
 		return s.forwardAnthropicViaNativeAnthropicEndpoint(ctx, c, account, body, defaultMappedModel)
 	}
 
@@ -63,6 +77,7 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	if shouldForwardOpenAIResponsesViaRawChatCompletions(account) {
 		return s.forwardAnthropicViaRawChatCompletions(ctx, c, account, body, defaultMappedModel)
 	}
+	SetActualOpenAIUpstreamEndpoint(c, openAIResponsesUpstreamEndpoint)
 
 	startTime := time.Now()
 
@@ -276,7 +291,15 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		}
 	}
 	if account.Platform == PlatformOpenAI {
-		if policyBody, changed := ApplyOpenAIReasoningEffortPolicyFromContext(ctx, responsesBody); changed {
+		policyBody, changed, policyErr := ApplyOpenAIReasoningEffortPolicyFromContext(ctx, responsesBody)
+		if policyErr != nil {
+			if IsReasoningEffortPolicyDenied(policyErr) {
+				MarkOpsClientBusinessLimited(c, OpsClientBusinessLimitedReasonLocalPolicyDenied)
+				writeAnthropicError(c, http.StatusForbidden, "forbidden_error", policyErr.Error())
+			}
+			return nil, policyErr
+		}
+		if changed {
 			responsesBody = policyBody
 			if responsesReq.Reasoning != nil {
 				responsesReq.Reasoning.Effort = gjson.GetBytes(responsesBody, "reasoning.effort").String()
@@ -297,6 +320,7 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		return nil, policyErr
 	}
 	responsesBody = updatedBody
+	responsesReq.ServiceTier = normalizedOpenAIServiceTierValue(gjson.GetBytes(responsesBody, "service_tier").String())
 	grokCacheIdentity := ""
 	if account.Platform == PlatformGrok {
 		grokIntentBody := responsesBody
@@ -371,7 +395,7 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	// 7. Send request
 	firstOutputTimeout := s.openAIFirstOutputTimeoutForRequest(ctx, account, "")
 	proxyURL := ""
-	if account.Proxy != nil {
+	if account.ProxyID != nil && account.Proxy != nil {
 		proxyURL = account.Proxy.URL()
 	}
 	// Grok may reject encrypted reasoning replayed under a different OAuth
@@ -405,7 +429,8 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 			}
 			headerGuard.close()
 			return nil, s.newOpenAIFirstOutputTimeoutError(
-				ctx, c, account, startTime, originalModel, "", firstOutputTimeout,
+				ctx, c, account, opsUpstreamProxyID(account), opsUpstreamProxyName(account),
+				startTime, originalModel, "", firstOutputTimeout,
 				"response_headers", nil,
 			)
 		}
@@ -550,6 +575,7 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		notifyOpenAIAutoReset(*account.ParentAccountID)
 	}
 
+	stampOpenAIResponsesUpstreamEndpoint(c, result)
 	return result, handleErr
 }
 
@@ -599,7 +625,8 @@ func (s *OpenAIGatewayService) handleAnthropicBufferedStreamingResponse(
 	if err != nil {
 		if errors.Is(err, errOpenAICompatFirstOutputTimeout) {
 			return nil, s.newOpenAIFirstOutputTimeoutError(
-				c.Request.Context(), c, account, startTime, originalModel, "",
+				c.Request.Context(), c, account, opsUpstreamProxyID(account), opsUpstreamProxyName(account),
+				startTime, originalModel, "",
 				firstOutputTimeout, "semantic_output", resp.Header,
 			)
 		}
@@ -677,6 +704,7 @@ func (s *OpenAIGatewayService) handleAnthropicBufferedStreamingResponse(
 
 	result := &OpenAIForwardResult{
 		RequestID:                     requestID,
+		UpstreamHeaders:               resp.Header,
 		ResponseID:                    finalResponse.ID,
 		Usage:                         usage,
 		Model:                         originalModel,
@@ -715,6 +743,8 @@ func (s *OpenAIGatewayService) recordOpenAIMessagesStreamUpstreamError(c *gin.Co
 	message = sanitizeUpstreamErrorMessage(message)
 	setOpsUpstreamError(c, http.StatusBadGateway, message, "")
 	event := OpsUpstreamErrorEvent{
+		ProxyID:            opsUpstreamProxyID(account),
+		ProxyName:          opsUpstreamProxyName(account),
 		Platform:           PlatformOpenAI,
 		UpstreamStatusCode: http.StatusBadGateway,
 		UpstreamRequestID:  strings.TrimSpace(upstreamRequestID),
@@ -1019,6 +1049,7 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 	resultWithUsage := func() *OpenAIForwardResult {
 		out := &OpenAIForwardResult{
 			RequestID:                     requestID,
+			UpstreamHeaders:               resp.Header,
 			ResponseID:                    responseID,
 			Usage:                         usage,
 			Model:                         originalModel,
@@ -1269,7 +1300,8 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 	firstOutputTimeoutError := func() (*OpenAIForwardResult, error) {
 		_ = resp.Body.Close()
 		return resultWithUsage(), s.newOpenAIFirstOutputTimeoutError(
-			c.Request.Context(), c, account, startTime, originalModel, "",
+			c.Request.Context(), c, account, opsUpstreamProxyID(account), opsUpstreamProxyName(account),
+			startTime, originalModel, "",
 			firstOutputTimeout, "semantic_output", resp.Header,
 		)
 	}
@@ -1419,7 +1451,8 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 			}
 			_ = resp.Body.Close()
 			return resultWithUsage(), s.newOpenAIFirstOutputTimeoutError(
-				c.Request.Context(), c, account, startTime, originalModel, "",
+				c.Request.Context(), c, account, opsUpstreamProxyID(account), opsUpstreamProxyName(account),
+				startTime, originalModel, "",
 				firstOutputTimeout, "semantic_output", resp.Header,
 			)
 

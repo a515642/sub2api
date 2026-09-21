@@ -12,8 +12,9 @@ import (
 )
 
 type OpenAIMessagesDispatchModelConfig = domain.OpenAIMessagesDispatchModelConfig
-type GroupModelsListConfig = domain.GroupModelsListConfig
+type GroupCodexModelsManifestConfig = domain.GroupCodexModelsManifestConfig
 type ReasoningEffortMapping = domain.ReasoningEffortMapping
+type GroupModelsListConfig = domain.GroupModelsListConfig
 
 type Group struct {
 	ID             int64
@@ -100,11 +101,19 @@ type Group struct {
 	// OpenAI Messages 调度配置（仅 openai 平台使用）
 	AllowMessagesDispatch       bool
 	AllowLive                   bool
+	ForceOpenAIFast             bool // 强制 OpenAI 网关请求使用 service_tier=priority
+	FreeOpenAIFast              bool // OpenAI Fast 请求按 Standard 价格向用户计费
 	RequireOAuthOnly            bool // 仅允许非 apikey 类型账号关联（OpenAI/Antigravity/Anthropic/Gemini）
 	RequirePrivacySet           bool // 调度时仅允许 privacy 已成功设置的账号（OpenAI/Antigravity/Anthropic/Gemini）
 	DefaultMappedModel          string
 	MessagesDispatchModelConfig OpenAIMessagesDispatchModelConfig
-	ModelsListConfig            GroupModelsListConfig
+	ModelAllowlist              GroupModelAllowlist
+	// CodexModelsManifestConfig 开启后，普通模型列表与 Codex manifest 优先使用
+	// 固定账号列表拉取并合并，不经过调度器（仅 openai 平台）。
+	CodexModelsManifestConfig GroupCodexModelsManifestConfig
+	// ModelsListConfig 自定义 /v1/models 展示列表配置（本地定制功能，
+	// 仅影响模型列表响应，不影响调度）。
+	ModelsListConfig GroupModelsListConfig
 
 	// RPMLimit 分组级每分钟请求数上限（0 = 不限制）。
 	// 一旦设置即接管该分组用户的限流（覆盖用户级 rpm_limit），可被 user-group rpm_override 进一步覆盖。
@@ -115,9 +124,12 @@ type Group struct {
 	FirstOutputFailoverTimeoutSeconds int
 	FirstOutputFailoverMaxSwitches    int
 
-	// MaxReasoningEffort limits the effective OpenAI/Codex reasoning effort.
+	// MaxReasoningEffort limits the effective Anthropic/OpenAI reasoning effort.
 	// Empty means unlimited; supported values are minimal/low/medium/high/xhigh/max.
 	MaxReasoningEffort string
+	// MaxReasoningEffortOverLimit is the access control when an explicit effort
+	// exceeds the ceiling: downgrade (default) or deny.
+	MaxReasoningEffortOverLimit string
 	// ReasoningEffortMappings rewrites explicit request values before applying the ceiling.
 	ReasoningEffortMappings []ReasoningEffortMapping
 
@@ -136,6 +148,12 @@ type Group struct {
 	AccountCount            int64
 	ActiveAccountCount      int64
 	RateLimitedAccountCount int64
+}
+
+// IsGroupBindableInSimpleMode is the shared policy for groups that may be
+// surfaced and bound to accounts while running in simple mode.
+func IsGroupBindableInSimpleMode(group *Group) bool {
+	return group != nil && group.Platform != PlatformComposite
 }
 
 func (g *Group) IsActive() bool {

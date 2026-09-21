@@ -85,7 +85,15 @@ func (s *OpenAIGatewayService) forwardAnthropicViaRawChatCompletions(
 		chatBody = normalizedBody
 	}
 	if account.Platform == PlatformOpenAI {
-		if policyBody, changed := ApplyOpenAIReasoningEffortPolicyFromContext(ctx, chatBody); changed {
+		policyBody, changed, policyErr := ApplyOpenAIReasoningEffortPolicyFromContext(ctx, chatBody)
+		if policyErr != nil {
+			if IsReasoningEffortPolicyDenied(policyErr) {
+				MarkOpsClientBusinessLimited(c, OpsClientBusinessLimitedReasonLocalPolicyDenied)
+				writeAnthropicError(c, http.StatusForbidden, "forbidden_error", policyErr.Error())
+			}
+			return nil, policyErr
+		}
+		if changed {
 			chatBody = policyBody
 			if effectiveEffort := strings.TrimSpace(gjson.GetBytes(chatBody, "reasoning_effort").String()); effectiveEffort != "" {
 				reasoningEffort = &effectiveEffort
@@ -135,7 +143,7 @@ func (s *OpenAIGatewayService) forwardAnthropicViaRawChatCompletions(
 	resp, err := s.sendCCUpstreamRequest(guardedCtx, c, account, targetURL, chatBody, clientStream, apiKey, account.GetOpenAIUserAgent(), "")
 	if err != nil {
 		if firstOutputTimedOut.Load() {
-			return nil, s.newOpenAIFirstOutputTimeoutError(ctx, c, account, startTime, originalModel, reasoningEffortValue, firstOutputTimeout, "response_headers", nil)
+			return nil, s.newOpenAIFirstOutputTimeoutError(ctx, c, account, opsUpstreamProxyID(account), opsUpstreamProxyName(account), startTime, originalModel, reasoningEffortValue, firstOutputTimeout, "response_headers", nil)
 		}
 		return nil, err
 	}
@@ -143,7 +151,7 @@ func (s *OpenAIGatewayService) forwardAnthropicViaRawChatCompletions(
 		if resp.Body != nil {
 			_ = resp.Body.Close()
 		}
-		return nil, s.newOpenAIFirstOutputTimeoutError(ctx, c, account, startTime, originalModel, reasoningEffortValue, firstOutputTimeout, "response_headers", resp.Header)
+		return nil, s.newOpenAIFirstOutputTimeoutError(ctx, c, account, opsUpstreamProxyID(account), opsUpstreamProxyName(account), startTime, originalModel, reasoningEffortValue, firstOutputTimeout, "response_headers", resp.Header)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -164,7 +172,7 @@ func (s *OpenAIGatewayService) forwardAnthropicViaRawChatCompletions(
 	}
 	result, err := s.bufferChatCompletionsAsAnthropic(c, resp, originalModel, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime, firstOutputTimeout, &firstOutputTimedOut, markFirstOutput)
 	if firstOutputTimedOut.Load() {
-		return nil, s.newOpenAIFirstOutputTimeoutError(ctx, c, account, startTime, originalModel, reasoningEffortValue, firstOutputTimeout, "semantic_output", resp.Header)
+		return nil, s.newOpenAIFirstOutputTimeoutError(ctx, c, account, opsUpstreamProxyID(account), opsUpstreamProxyName(account), startTime, originalModel, reasoningEffortValue, firstOutputTimeout, "semantic_output", resp.Header)
 	}
 	return result, err
 }
@@ -202,6 +210,7 @@ func (s *OpenAIGatewayService) bufferChatCompletionsAsAnthropic(
 
 	return &OpenAIForwardResult{
 		RequestID:                   requestID,
+		UpstreamHeaders:             resp.Header,
 		Usage:                       usage,
 		Model:                       originalModel,
 		BillingModel:                billingModel,
@@ -266,13 +275,14 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsAnthropic(
 
 	if scan.Err != nil {
 		if firstOutputTimedOut != nil && firstOutputTimedOut.Load() {
-			return nil, s.newOpenAIFirstOutputTimeoutError(c.Request.Context(), c, account, startTime, originalModel, "", firstOutputTimeout, "semantic_output", resp.Header)
+			return nil, s.newOpenAIFirstOutputTimeoutError(c.Request.Context(), c, account, opsUpstreamProxyID(account), opsUpstreamProxyName(account), startTime, originalModel, "", firstOutputTimeout, "semantic_output", resp.Header)
 		}
 		// Broken upstream read: skip finalization so no synthetic message_stop
 		// masks the truncation, and surface the error to flag usage incomplete
 		// (mirrors forwardResponsesViaRawChatCompletions).
 		return &OpenAIForwardResult{
 			RequestID:                   requestID,
+			UpstreamHeaders:             resp.Header,
 			Usage:                       usage,
 			Model:                       originalModel,
 			BillingModel:                billingModel,
@@ -309,6 +319,7 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsAnthropic(
 
 	return &OpenAIForwardResult{
 		RequestID:                   requestID,
+		UpstreamHeaders:             resp.Header,
 		Usage:                       usage,
 		Model:                       originalModel,
 		BillingModel:                billingModel,
