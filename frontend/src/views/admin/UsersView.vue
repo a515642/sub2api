@@ -769,7 +769,7 @@
 
     <ConfirmDialog :show="showDeleteDialog" :title="t('admin.users.deleteUser')" :message="t('admin.users.deleteConfirm', { email: deletingUser?.email })" :danger="true" @confirm="confirmDelete" @cancel="showDeleteDialog = false" />
     <ConfirmDialog :show="showBulkBanDialog" :title="t('admin.users.bulkBan.title')" :message="t('admin.users.bulkBan.confirm', { count: selectedCount })" :danger="true" @confirm="confirmBulkBan" @cancel="showBulkBanDialog = false" />
-    <ConfirmDialog :show="showBulkDeleteDialog" :title="t('admin.users.bulkDelete.title')" :message="t('admin.users.bulkDelete.confirm', { count: selectedCount })" :danger="true" @confirm="confirmBulkDelete" @cancel="showBulkDeleteDialog = false" />
+    <ConfirmDialog :show="showBulkDeleteDialog" :title="t('admin.users.bulkDelete.title')" :message="t('admin.users.bulkDelete.confirm', { count: selectedCount })" :danger="true" :confirm-text="t('common.delete')" @confirm="confirmBulkDelete" @cancel="showBulkDeleteDialog = false" />
     <UserCreateModal :show="showCreateModal" @close="showCreateModal = false" @success="loadUsers" />
     <UserEditModal :show="showEditModal" :user="editingUser" @close="closeEditModal" @success="loadUsers" />
     <BulkEditUserModal

@@ -123,11 +123,11 @@ func (s *AccountTestService) ProbeOpenAIAPIKeyResponsesSupport(ctx context.Conte
 		return
 	}
 	if account.IsCNProvider() {
-		// 国产 OpenAI 兼容上游（kimi/zhipu/deepseek）普遍仅支持 /v1/chat/completions，
-		// 不存在 /v1/responses 端点，跳过网络探测。协议路由只由管理员显式配置，
-		// 探测结果仅保留作诊断，不能覆盖账号配置。
-		if account.GetAPIProtocol() == APIProtocolResponses ||
-			(account.Platform == PlatformDeepseek && account.IsAdaptiveAPIProtocol()) {
+		// 国产 OpenAI 兼容上游（kimi/zhipu/deepseek/minimax）普遍仅支持
+		// /v1/chat/completions，不存在 /v1/responses 端点，跳过网络探测。
+		// 协议路由只由管理员显式配置（credentials.api_protocol），
+		// 探测结果仅保留作诊断（openai_responses_supported），不能覆盖账号配置。
+		if account.UsesNativeCNResponses() {
 			_ = s.accountRepo.UpdateExtra(ctx, account.ID, map[string]any{
 				openai_compat.ExtraKeyResponsesSupported: true,
 			})
